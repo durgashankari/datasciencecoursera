@@ -68,8 +68,8 @@ dataTable<- tbl_df(arrange(dataAggr,subject,activityName))
 #Names before
 head(str(dataTable),2)
 
-names(dataTable)<-gsub("std()", "STDDEV", names(dataTable))
-names(dataTable)<-gsub("mean()", "MEAN", names(dataTable))
+names(dataTable)<-gsub("std()", "std", names(dataTable))
+names(dataTable)<-gsub("mean()", "mean", names(dataTable))
 names(dataTable)<-gsub("^t", "time", names(dataTable))
 names(dataTable)<-gsub("^f", "frequency", names(dataTable))
 names(dataTable)<-gsub("Acc", "Accelerometer", names(dataTable))
