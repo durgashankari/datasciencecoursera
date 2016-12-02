@@ -230,7 +230,7 @@ injuriesPlot <- qplot(EVTYPE, data = injuries, weight = INJURIES, geom = "bar", 
 grid.arrange(fatalitiesPlot, injuriesPlot, ncol = 2)
 ```
 
-![plot of chunk plo9](/datasciencecoursera/Plot9.png) 
+![plot of chunk Plot9](./Plot9.png) 
 
 Based on the above histograms, we find that **excessive heat** and **tornado** cause most fatalities; **tornato** causes most injuries in the United States from 1995 to 2011.
 
@@ -295,7 +295,7 @@ cropPlot<- qplot(EVTYPE, data = crop, weight = cropDamage, geom = "bar", binwidt
 grid.arrange(propertyPlot, cropPlot, ncol = 2)
 ```
 
-![plot of chunk plot11](datasciencecoursera/Plot11a.png) 
+![plot of chunk Plot11a](./Plot11a.png) 
 
 Based on the above histograms, we find that **flood** and **hurricane/typhoon** cause most property damage; **drought** and **flood** causes most crop damage in the United States from 1995 to 2011.
 
