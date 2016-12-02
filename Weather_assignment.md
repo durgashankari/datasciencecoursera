@@ -75,7 +75,7 @@ if (dim(stormData)[2] == 37) {
 hist(stormData$year, breaks = 30)
 ```
 
-![plot of chunk plot4](datasciencecoursera/Plot4a.png) 
+![plot of chunk plot4](./datasciencecoursera/Plot4a.png) 
 
 Based on the above histogram, we see that the number of events tracked starts to significantly increase around 1995. So, we use the subset of the data from 1990 to 2011 to get most out of good records.
 
