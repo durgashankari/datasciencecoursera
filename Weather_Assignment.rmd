@@ -1,0 +1,378 @@
+---
+title: "Human and Financial Impact Of US Weather Events"
+author: "Durga"
+date: "Dec 1, 2016"
+output: 
+    html_document:
+        toc: true
+---
+  
+------------------------------
+  
+#Synopsis  
+THE US government National Oceanic & Atmospheric Administration (NOAA) maintains a record of major weather events and their human and financial impact. This paper uses that data to assess types of event with the highest impact in order to support prevention and response planning.  
+  
+The coded data was cleaned (as much as reasonably possible) as it is of variable quality (possibly due to the long history of the series and previously poor capture mechanisms and standards).  
+  
+Analysis confirmed that the key risk drivers are Tornados, Floods and what might be categorised as extreme storms (eg. Hurricanes) with their associated characteristics (high winds, lightning, floods, hail and sleet in winter).  
+  
+Tornados represent the main risk to human health, they cause twice as many fatalities and 10 times as many injuries as the next highest impact category (Extreme Heat).  Tornados and Extreme Heat account for approximately 60% of fatalities between them.  
+  
+Floods of all types account for almost 50% of all financial impact (when aggregated together) and primarily impact property (total crop damage is only about 10% of the total cost of property damage). Hurricanes and Tornados account for a further 30% of total damage cost.  
+
+------------------------------
+
+#Data Processing  
+Processing commenced with setup activities
+```{r}
+# Libraries
+library(ggplot2) # Graphics
+library(reshape2)   # Dataframe manipulations (melt etc)
+library(gridExtra)  # Manage plots (multiple disparate plots on a single panel)
+# Constants
+chrData_subdir        <- "./data"  # Must contain "./" as first 2 characters
+chrDownload_filename  <- "data/repdata_data_FStormData.csv.bz2"
+chrDownload_extract_dir <- "data/repdata_data_FStormData"
+chrDownload_address   <- "https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2"
+chrData_base_address  <- "data/repdata_data_FStormData.csv"  # Base / measurement data ie. Observations
+```
+##Data Aqcuisition
+[Data](https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2) was acquired from a Coursera designated website (NOT direct from NOAA) along with a rudimentary [Data Dictionary](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2Fpd01016005curr.pdf) and FAQ document.  
+  
+The data is downloaded unless it already exists in the "data"" directory and then read directly into R for processing (see next section).   
+```{r,cache=TRUE}
+    # Remember working directory
+    chrWd_initial <- getwd()
+    # assume data is in "data" subdirectory
+    if (! file.exists(chrData_subdir)) {
+        dir.create(chrData_subdir)
+    }
+    # Do we have the expected data file ?
+    if (! file.exists(chrDownload_filename)) {
+        # download the input data
+        download.file(chrDownload_address,destfile=chrDownload_filename,method="curl")
+    }
+    # Read the base data as downloaded, if we haven't already done so (performance measure for dev phase)
+    if(!exists(as.character(substitute("dfStorm_data")))){
+        dfStorm_data <- read.csv(chrDownload_filename,header=TRUE)
+    }
+    # Create the valid events data as extracted from the DD at page 6, section 2.1.1
+    dfEvents_valid <- data.frame(Event.Name=c("Astronomical Low Tide",
+                                              "Avalanche", "Blizzard","Coastal Flood","Cold/Wind Chill",
+                                              "Debris Flow","Dense Fog","Dense Smoke","Drought","Dust Devil",
+                                              "Dust Storm","Excessive Heat","Extreme Cold/Wind Chill",
+                                              "Flash Flood","Flood","Frost/Freeze","Funnel Cloud",
+                                              "Freezing Fog","Hail","Heat","Heavy Rain",
+                                              "Heavy Snow","High Surf","High Wind","Hurricane (Typhoon)",
+                                              "Ice Storm","Lake-Effect Snow","Lakeshore Flood","Lightning",
+                                              "Marine Hail","Marine High Wind","Marine Strong Wind",
+                                              "Marine Thunderstorm Wind","Rip Current","Seiche","Sleet",
+                                              "Storm Surge/Tide","Strong Wind","Thunderstorm Wind","Tornado",
+                                              "Tropical Depression","Tropical Storm","Tsunami","Volcanic Ash",
+                                              "Waterspout","Wildfire","Winter Storm","Winter Weather"))
+    dfEvents_valid$Event.Name <- toupper(dfEvents_valid$Event.Name)
+
+    # Calculate sample size (refnum appears to be unique) - use defensive programming technique, just in case
+    numSample_size <- sum(is.na(dfStorm_data$REFNUM)) + sum(!is.na(dfStorm_data$REFNUM))
+    # Restore working directory
+    setwd(chrWd_initial)
+
+```
+##Data Cleanup  
+There are 3 key variables used for evaluation (Event Type, Property Cost Exponent, Crop Cost Exponent), which are of dubious quality and need work to make them usable.  
+  
+###Event Type  
+
+Event Type is critical to all parts of the analysis so it is tackled first. The dictionary document defines 48 valid codes at Section 2.2.1 on page 6.  
+Firstly, the code values were all translated to upper case for ease and consistency of processing.  
+Secondly punctuation, special characters and additional "blanks"" were removed.  
+It seems that even the poor quality code values generally contain some snippet or element of a "good" code so they we're picked out one by one, then the remainder were allocated to an "other" bucket (which had little or no impact on the results so was deemed a "safe" strategy).   
+There was a group of "Summary" event codes which were a bit odd, they were also consigned to the "Other" bucket.  
+  
+```{r,cache=TRUE}
+# ----------------------------------------------------------------------
+# Clean the Environment Type field
+# ======================================================================
+# clean_eventtype <- function() {
+    # How many codes are there ? VS the 48 quoted in the DD page 6 Section 2.1.1
+    numEvent_type_count <- length(levels(dfStorm_data$EVTYPE))
+    # Set all to uppercase for easier comparison, in a new variable
+    chrEvents <- toupper(dfStorm_data$EVTYPE)
+    # Compress extra spaces and extraneous characters out
+    chrEvents <- gsub("( ){1,}", " ", gsub("[^A-Z0-9 ]", " ", chrEvents))
+    # Recognise flood events
+    chrEvents[grepl("COASTAL|STORM SURGE", chrEvents)] <- "COASTAL FLOOD"
+    chrEvents[grepl("FLASH", chrEvents)] <- "FLASH FLOOD"
+    chrEvents[!grepl("FLASH|COASTAL", chrEvents) & grepl("FLOOD", chrEvents)] <- "FLOOD"
+    chrEvents[grepl("STREAM|URBAN", chrEvents)] <- "FLOOD"
+    # Recognise heat events
+    chrEvents[grepl("HEAT|DRY", chrEvents)] <- "EXCESSIVE HEAT"
+    chrEvents[grepl("HOT|WARM", chrEvents)] <- "EXCESSIVE HEAT"
+    chrEvents[grepl("RECORD (HIGH|.*TEMP)|HIGH TEMPERA", chrEvents)] <- "EXCESSIVE HEAT"
+    # Recognise cold events
+    chrEvents[grepl("SLEET", chrEvents)] <- "SLEET"
+    chrEvents[grepl("BLIZZARD", chrEvents)] <- "BLIZZARD"
+    chrEvents[grepl("EXTREME", chrEvents) & grepl("CHILL|COLD", chrEvents)] <- "EXTREME COLD/WIND CHILL"
+    chrEvents[!grepl("EXTREME", chrEvents) & grepl("CHILL|COLD", chrEvents)] <- "COLD/WIND CHILL"
+    chrEvents[grepl("LAKE", chrEvents) & grepl("SNOW", chrEvents)] <- "LAKE-EFFECT SNOW"
+    chrEvents[!grepl("LAKE", chrEvents) & grepl("SNOW", chrEvents)] <- "HEAVY SNOW"
+    chrEvents[grepl("FROST|FREEZE", chrEvents)] <- "FROST/FREEZE"
+    chrEvents[!grepl("FROST", chrEvents) & grepl("FREEZE", chrEvents)] <- "SLEET"
+    chrEvents[grepl("FREEZ", chrEvents) & grepl("RAIN", chrEvents)] <- "SLEET"
+    chrEvents[grepl("DRIZZLE", chrEvents)] <- "SLEET"
+    chrEvents[grepl("(RECORD LOW|LOW TEMP)", chrEvents)] <- "EXTREME COLD/WIND CHILL"
+    chrEvents[grepl("GLAZE", chrEvents)] <- "EXTREME COLD/WIND CHILL"
+    chrEvents[grepl("ICE", chrEvents)] <- "ICE STORM"
+    chrEvents[grepl("WINT", chrEvents)] <- "WINTER STORM"
+    chrEvents[grepl("HAIL", chrEvents)] <- "HAIL"
+    # Recognise and collect lightning, wind and rain events
+    chrEvents <- gsub("WINDS", "WIND", chrEvents)
+    chrEvents[!grepl("DERSTORM WIND", chrEvents) & grepl("THUN|TSTM", chrEvents)] <- "LIGHTNING"
+    chrEvents[grepl("LIGHT|LIGN", chrEvents)] <- "LIGHTNING"
+    chrEvents[grepl("DERSTORM WIND", chrEvents)] <- "THUNDERSTORM WIND"
+    chrEvents[grepl("TORN", chrEvents)] <- "TORNADO"
+    chrEvents[grepl("SPOUT", chrEvents)] <- "WATERSPOUT"
+    chrEvents[grepl("HURRICANE|TYPHOON", chrEvents)] <- "HURRICANE (TYPHOON)"
+    chrEvents[grepl("FIRE", chrEvents)] <- "WILDFIRE"
+    chrEvents[!grepl("MARINE", chrEvents) & grepl("HIGH WIND", chrEvents)] <- "HIGH WIND"
+    chrEvents[grepl("GUST", chrEvents)] <- "STRONG WIND"
+    chrEvents[!grepl("COLD|MARINE|THUNDER|STRONG|HIGH", chrEvents) & grepl("WIND", chrEvents)] <- "STRONG WIND"
+    chrEvents[grepl("FUNNEL", chrEvents)] <- "FUNNEL CLOUD"
+    chrEvents[grepl("TROPICAL STORM", chrEvents)] <- "TROPICAL STORM"
+    chrEvents[!grepl("FREEZIN", chrEvents) & grepl("FOG|VOG", chrEvents)] <- "DENSE FOG"
+    chrEvents[grepl("WET|RAIN|SHOWER|PRECIP", chrEvents)] <- "HEAVY RAIN"
+    # Find dust events
+    chrEvents[grepl("DUST DEVEL", chrEvents)] <- "DUST DEVIL"
+    chrEvents[!grepl("DEVIL", chrEvents) & grepl("DUST", chrEvents)] <- "DUST STORM"
+    # All on-sea events (marine)
+    chrEvents[grepl("RIP CURRENT", chrEvents)] <- "RIP CURRENT"
+    chrEvents[!grepl("LOW", chrEvents) & grepl("TIDE|WAVE|SWELL", chrEvents)] <- "STORM SURGE/TIDE"
+    chrEvents[grepl("SURF", chrEvents)] <- "HIGH SURF"
+    # A few odd, miscellaneuosu events
+    chrEvents[grepl("VOLCAN", chrEvents)] <- "VOLCANIC ASH"
+    # Hmm, sort of landslides so reclassify
+    chrEvents[grepl("(MUD|LAND|ROCK).*SLIDE", chrEvents)] <- "LANDSLIDE"
+    # Summary or not recognised yet ... makes it "unknown"
+    numEvents_summary <- sum(grepl("SUMMARY", chrEvents))
+    chrEvents[grepl("SUMMARY", chrEvents)] <- "OTHER/UNKOWN"
+    numEvents_unknown <- sum(grepl("OTHER/UNKNOWN", chrEvents))
+    chrEvents[!chrEvents %in% c("LANDSLIDE", "OTHER", dfEvents_valid$Event.Name)] <- "OTHER/UNKNOWN"
+    # How many "Unknown" did we add
+    numEvents_unknown <- sum(grepl("OTHER/UNKNOWN", chrEvents)) - numEvents_unknown + numEvents_summary
+    # re-assign the cleaned up column values to the new variable in the source data
+    dfStorm_data$EVTYPE_CLEAN <- as.factor(chrEvents)
+    # How many Event codes did we end up with after cleanup
+    numEvents_clean <- length(levels(dfStorm_data$EVTYPE_CLEAN))
+
+```
+We started with `r numEvent_type_count` Event codes and finsihed with `r numEvents_clean` after the cleanup.  
+Additionally, only `r numEvents_unknown` unknown codes and `r numEvents_summary` summary codes had to be categorised as "Unknown" since they were unrecognisable.  
+  
+###Exponent Codes  
+
+Calculation of cost (economic) impact requires the use of "exponent" codes as a scalar for the number quoted. The dictionary provides some insight into the intended codes, but compliance has been poor so cleanup is required.  
+
+The 3 valid Exponent codes are described in the dictionary document at section 2.7 on page p12 of the dictionary document.      
+In this case the code is only 1 character so the cleanup process focused on standardising to those codes described in the dictionary, including conversion to upper case if necessary.  Other, unrecognisable codes were discarded because -  
+*  There was no clear definition of their meaning
+*  The number of occurences was relatively small compared to the "valid" codes, particularly those with highest impact (ie. "B" = billion).  
+  
+NOTE that the US definition of Billion was assumed ie. 10^9 (one thousand million).  
+  
+```{r,cache=TRUE}
+    # How many unqiue Cost Exp values are there ? vs the 3 (KMB) on p12 section 2.7
+    numProperty_exp_val_count <- length(levels(dfStorm_data$PROPDMGEXP))
+    numCrop_exp_val_count <- length(levels(dfStorm_data$CROPDMGEXP))
+    # Attempt to measure quality of data (ie. prove it's poor)
+    numProp_exp_alpha <- sum(grepl("[a-zA-z]",dfStorm_data$PROPDMGEXP))
+    numCrop_exp_alpha <- sum(grepl("[a-zA-z]",dfStorm_data$CROPDMGEXP))
+    numProp_exp_null <- sum(is.na(dfStorm_data$PROPDMGEXP) | dfStorm_data$PROPDMGEXP == ""  | 
+                                dfStorm_data$PROPDMGEXP == " "  | dfStorm_data$PROPDMGEXP == 0)
+    numCrop_exp_null <- sum(is.na(dfStorm_data$CROPDMGEXP) | dfStorm_data$CROPDMGEXP == ""  | 
+                                dfStorm_data$CROPDMGEXP == " "  | dfStorm_data$CROPDMGEXP == 0)
+    numProp_exp_other <- numSample_size - numProp_exp_alpha - numProp_exp_null # Ignore small number of odd codes
+    numCrop_exp_other <- numSample_size - numCrop_exp_alpha - numCrop_exp_null # Ignore small number of odd codes
+    # Set the useable alpha codes to upper case and others to NA (actually "" in this case)
+    dfStorm_data$PROPDMGEXP_CLEAN <- dfStorm_data$PROPDMGEXP
+    dfStorm_data[!grepl("[a-zA-z]",dfStorm_data$PROPDMGEXP), "PROPDMGEXP_CLEAN"] <- "" #Ignore the few odd values
+    dfStorm_data[grepl("[hH]",dfStorm_data$PROPDMGEXP), "PROPDMGEXP_CLEAN"] <- ""      # Who knows what "H" meant
+    dfStorm_data$PROPDMGEXP_CLEAN <- toupper(dfStorm_data$PROPDMGEXP_CLEAN)
+    #
+    dfStorm_data$CROPDMGEXP_CLEAN <- dfStorm_data$CROPDMGEXP
+    dfStorm_data[!grepl("[a-zA-z]",dfStorm_data$CROPDMGEXP), "CROPDMGEXP_CLEAN"] <- "" #Ignore the few odd values
+    dfStorm_data$CROPDMGEXP_CLEAN <- toupper(dfStorm_data$CROPDMGEXP_CLEAN)
+
+    dfStorm_data$PROPDMG_CLEAN <- rep(0,length(dfStorm_data$PROPDMG))
+    dfStorm_data$CROPDMG_CLEAN <- rep(0,length(dfStorm_data$CROPDMG))
+    # H probably means "hundred" but doesn't apepar in documentation, it's minor anyway so ignore it
+    dfExps <- data.frame(chrExp=c("B","K","M"),numFac=c(1000000000,1000,1000000))
+    for (i in 1:length(dfExps$chrExp)) {
+        dfStorm_data$PROPDMG_CLEAN[dfStorm_data$PROPDMGEXP_CLEAN == dfExps$chrExp[i]] <- 
+            dfStorm_data[dfStorm_data$PROPDMGEXP_CLEAN == dfExps$chrExp[i],"PROPDMG"]  * dfExps$numFac[i]
+        dfStorm_data$CROPDMG_CLEAN[dfStorm_data$CROPDMGEXP_CLEAN == dfExps$chrExp[i]] <- 
+            dfStorm_data[dfStorm_data$CROPDMGEXP_CLEAN == dfExps$chrExp[i],"CROPDMG"]  * dfExps$numFac[i]
+    }
+    numProp_exp_clean <- sum(grepl("[a-zA-z]",dfStorm_data$PROPDMGEXP))
+    numCrop_exp_clean <- sum(grepl("[a-zA-z]",dfStorm_data$CROPDMGEXP))
+
+```
+For Property Damage Exponent, we started with `r numProperty_exp_val_count` codes vs the 3 valid codes we needed.  
+After cleanup we wound up ignoring `r numProp_exp_other` values, vs the `r numProp_exp_clean` useable values ie. the impact is most likely quite small, particularly given the difference in scale between the highest impact events and others.  
+  
+For Property Damage Exponent, we started with `r numCrop_exp_val_count` codes vs the 3 valid codes we needed.  
+After cleanup we wound up ignoring `r numCrop_exp_other` values, vs the `r numCrop_exp_clean` useable values ie. the impact is most likely quite small, particularly given the difference in scale between the highest impact events and others.  
+
+------------------------------
+
+#Results  
+We first aggregate, then sort the data ti enable generation of the plots ranked by impact.  
+We also generate a subset of the top 10 in order to easily create the "zoom" graphs showing the highest impact categories.
+  
+Finally we create the summary calculations and generate the plot (2 graphs each plot).  
+  
+Additional totals generated are used in the descriptive text following the plots.  
+  
+##Human Health Impact  
+
+```{r fig.height=10,fig.cap="Figure 1: Human Impact By Weather Event Category",fig.align="center",cache=TRUE}
+      # Create a cross-tab using Aggregate
+    dfHealth_summ <- aggregate.data.frame(cbind(dfStorm_data$FATALITIES,dfStorm_data$INJURIES), 
+                                          list(dfStorm_data$EVTYPE_CLEAN), FUN=sum, na.rm=TRUE)
+    names(dfHealth_summ) = c("EVENTTYPE","FATALITIES","INJURIES")
+    dfHealth_summ$TOTALIMPACT <- dfHealth_summ$FATALITIES + dfHealth_summ$INJURIES
+    #Re-order the data from highest fatalities to lowest(using injuries too requires much greater sophistication)
+    dfHealth_summ <- dfHealth_summ[order(-dfHealth_summ$FATALITIES),]
+    # Reset the factor ordering as we want it to appear in plots
+    dfHealth_summ$EVENTTYPE <- ordered(dfHealth_summ$EVENTTYPE, 
+                                       levels=levels(dfHealth_summ$EVENTTYPE)[unclass(dfHealth_summ$EVENTTYPE)])
+    # Generate top n data for "zoom" graph used to clarify highest impact events
+    topn <- 10 # Set number of top-n entries(10 is a good number, shows highest and contrasts with lower entries)
+    dfHealth_summ_topn <- dfHealth_summ[1:topn,]
+    #
+    dfHealth_summ_ext <- melt(dfHealth_summ,id="EVENTTYPE",measure.vars=c("FATALITIES","INJURIES"))
+    names(dfHealth_summ_ext) = c("EVENTTYPE","HEALTHIMPACT","COUNT")
+    dfHealth_summ_topn_ext <- melt(dfHealth_summ_topn,id="EVENTTYPE",measure.vars=c("FATALITIES","INJURIES"))
+    names(dfHealth_summ_topn_ext) = c("EVENTTYPE","HEALTHIMPACT","COUNT")
+    # Generate total fatalities and total flood totalities
+    numEvent_all_fatalities <- sum(dfHealth_summ$FATALITIES)
+    numEvent_tornado_all_fatalities <- sum(dfHealth_summ$FATALITIES[grepl("*TORNADO*",dfHealth_summ$EVENTTYPE)])
+    numEvent_flood_all_fatalities <- sum(dfHealth_summ$FATALITIES[grepl("*FLOOD*",dfHealth_summ$EVENTTYPE)])
+    numEvent_heat_all_fatalities <- sum(dfHealth_summ$FATALITIES[grepl("*HEAT*",dfHealth_summ$EVENTTYPE)])
+    #
+    plot_y_upper_lim <- 20000
+    qp02 <- qplot(EVENTTYPE, COUNT,data=dfHealth_summ_topn_ext,fill=HEALTHIMPACT,geom="bar",stat="identity",
+                  xlab=NULL,main=paste("Top", topn, "Weather Events By Number Of Peple Impacted"),
+                  ylab="Number People Impacted\n(Truncated to 20,000 max)") +
+                    scale_fill_discrete(name="Health Impact")
+    qp02 <- qp02 + coord_cartesian(ylim=c(0,plot_y_upper_lim))
+    qp01 <- qplot(EVENTTYPE, COUNT,data=dfHealth_summ_ext,fill=HEALTHIMPACT,geom="bar",stat="identity",
+                  xlab=NULL,ylab="Number People Impacted",
+                  main="All Weather Events By Number Of Peple Impacted") +
+                    scale_fill_discrete(name="Health Impact")
+    qp02 <- qp02 + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1,size=7)) +
+                    theme(axis.title.y = element_text(size=9)) +
+                    theme(legend.title = element_text(size=7)) + theme(legend.text = element_text(size=6)) +
+                    theme (plot.title = element_text(size=12))
+    qp01 <- qp01 + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1,size=5)) +
+                    theme(axis.title.y = element_text(size=9)) +
+                    theme(legend.title = element_text(size=7)) + theme(legend.text = element_text(size=6)) +
+                    theme (plot.title = element_text(size=12))
+    # 2 plots ... 1 "figure"
+    grid.arrange(qp01,qp02,nrow=2)
+
+```
+
+The Event categories with the highest human health impact are (NOT a figure) -  
+  
+|Event Category |  Fatalities |  Injuries | % Of Total Fatalities |  
+|:--------------|------------:|----------:|----------------------:|  
+`r dfHealth_summ$EVENTTYPE[1]`  |  `r format(dfHealth_summ$FATALITIES[1],justify="right", big.mark=",")`  |  `r format(dfHealth_summ$INJURIES[1],justify="right", big.mark=",")`  | `r  format(100*round(dfHealth_summ$FATALITIES[1]/numEvent_all_fatalities,2),big.mark=",")`%  
+`r dfHealth_summ$EVENTTYPE[2]`  |  `r format(dfHealth_summ$FATALITIES[2],justify="right", big.mark=",")`  |  `r format(dfHealth_summ$INJURIES[2],justify="right", big.mark=",")`  | `r  format(100*round(dfHealth_summ$FATALITIES[2]/numEvent_all_fatalities,2),big.mark=",")`%  
+`r dfHealth_summ$EVENTTYPE[3]`  |  `r format(dfHealth_summ$FATALITIES[3],justify="right", big.mark=",")`  |  `r format(dfHealth_summ$INJURIES[3],justify="right", big.mark=",")`  | `r  format(100*round(dfHealth_summ$FATALITIES[3]/numEvent_all_fatalities,2),big.mark=",")`%  
+`r dfHealth_summ$EVENTTYPE[4]`  |  `r format(dfHealth_summ$FATALITIES[4],justify="right", big.mark=",")`  |  `r format(dfHealth_summ$INJURIES[4],justify="right", big.mark=",")`  | `r  format(100*round(dfHealth_summ$FATALITIES[4]/numEvent_all_fatalities,2),big.mark=",")`%  
+`r dfHealth_summ$EVENTTYPE[5]`  |  `r format(dfHealth_summ$FATALITIES[5],justify="right", big.mark=",")`  |  `r format(dfHealth_summ$INJURIES[5],justify="right", big.mark=",")`  | `r  format(100*round(dfHealth_summ$FATALITIES[5]/numEvent_all_fatalities,2),big.mark=",")`%  
+GRAND TOTALS  | `r format(sum(dfHealth_summ$FATALITIES),justify="right", big.mark=",")` |  `r format(sum(dfHealth_summ$INJURIES),justify="right", big.mark=",")`  |  |  
+
+NOTE That Fatalities and Injuries have not been equated in any way in this analysis, they are very different and should not just be summed together. The analysis focuses on Fatalities leaving Injuries as a secondary concern.  
+
+It is clear Tornados cause far more health issues than any other type of weather event, nearly twice as many fatalities and nearly 10 times as many injuries as the next "worst" event category.  Tornados really ought to be outlawed.
+
+Of the total `r format(numEvent_all_fatalities,big.mark=",")` fatalities Tornados alone cause about `r  format(100*round(numEvent_tornado_all_fatalities/numEvent_all_fatalities,1),big.mark=",")`% and floods of all types collectively cause `r format(numEvent_flood_all_fatalities,big.mark=",")` or about `r format(100*round(numEvent_flood_all_fatalities/numEvent_all_fatalities,1),big.mark=",")`% compared to the `r format(100*round(numEvent_heat_all_fatalities/numEvent_all_fatalities,1),big.mark=",")`% caused by Excessive Heat
+
+Preparing for Tornados may be difficult since they often strike with relatively little warning (unlike Hurricanes and Excessive Heat events). Despite these predictive difficulties, the human impact is so high prediction, preparation and speedy reaction are mandatory to minimise the human impact.  
+
+##Cost (Economic) Impact  
+
+```{r fig.height=10,fig.cap="Figure 2: Cost (Economic) Impact By Weather Event Category",fig.align="center",cache=TRUE,fig.scap=""}
+    # Generate the cross tab
+    dfCost_summ <- aggregate.data.frame(cbind(dfStorm_data$PROPDMG_CLEAN,dfStorm_data$CROPDMG_CLEAN), 
+                                        list(dfStorm_data$EVTYPE_CLEAN), FUN=sum, na.rm=TRUE)
+    names(dfCost_summ) = c("EVENTTYPE","PROPERTY","CROP")
+    # Rescale to make the y axis labels more readable
+    dfCost_summ$PROPERTY <- dfCost_summ$PROPERTY / 1000000
+    dfCost_summ$CROP <- dfCost_summ$CROP / 1000000
+    # Re-order based on total cost (a dollar is a dollar is a dollar)
+    dfCost_summ <- dfCost_summ[order(-(dfCost_summ$PROPERTY + dfCost_summ$CROP)),]
+    dfCost_summ$EVENTTYPE <- ordered(dfCost_summ$EVENTTYPE, 
+                                     levels=levels(dfCost_summ$EVENTTYPE)[unclass(dfCost_summ$EVENTTYPE)])
+    # Melt into format useful for graphs
+    dfCost_summ_ext <- melt(dfCost_summ,id="EVENTTYPE",measure.vars=c("PROPERTY","CROP"))
+    names(dfCost_summ_ext) = c("EVENTTYPE","COSTIMPACT","COST")
+    # Generate top n data for "zoom" graph used to clarify highest impact events
+    topn <- 10 #Set number of top-n entries(10 is a good number, shows highest and contrasts with lower entries)
+    dfCost_summ_topn <- dfCost_summ[1:topn,]
+    dfCost_summ_topn_ext <- melt(dfCost_summ_topn,id="EVENTTYPE",measure.vars=c("PROPERTY","CROP"))
+    names(dfCost_summ_topn_ext) = c("EVENTTYPE","COSTIMPACT","COST")
+    # Calculate the  cost of all types of Flood events
+    numEvent_flood_all_cost <- sum(dfCost_summ_ext$COST[grepl("*FLOOD*",dfCost_summ_ext$EVENTTYPE)])*1000000
+    numEvent_all_cost <- sum(dfCost_summ_ext$COST)*1000000
+    
+    # Generate the plot
+    qp01 <- qplot(EVENTTYPE, COST,data=dfCost_summ_ext,fill=COSTIMPACT,geom="bar",stat="identity",
+                  xlab=NULL,ylab="Cost Impact ($Millions)",main="All Weather Events By $Cost Of Impact") +
+        scale_fill_discrete(name="Cost Impact")
+    
+    qp01 <- qp01 + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1,size=5)) +
+        theme(axis.title.y = element_text(size=9)) +
+        theme(legend.title = element_text(size=7)) + theme(legend.text = element_text(size=6)) +
+        theme (plot.title = element_text(size=12))
+    
+    qp02 <- qplot(EVENTTYPE, COST,data=dfCost_summ_topn_ext,fill=COSTIMPACT,geom="bar",stat="identity",
+                  xlab=NULL,ylab="Cost Impact ($Millions)",
+                  main=paste("Top",topn, "Weather Events By $Cost Of Impact")) +
+        scale_fill_discrete(name="Cost Impact")
+    
+    qp02 <- qp02 + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1,size=7)) +
+        theme(axis.title.y = element_text(size=9)) +
+        theme(legend.title = element_text(size=7)) + theme(legend.text = element_text(size=6)) +
+        theme (plot.title = element_text(size=12))
+    # 2 plots ... 1 "figure"
+    grid.arrange(qp01,qp02,nrow=2)
+
+```
+
+The Event categories with the highest Cost impact are (NOT a figure)  -  
+
+| Event Category |  Property Damage $  |  Crop Damage $  |  Total Cost $  |  % Of Total Cost  |
+|:---------------|--------------------:|----------------:|---------------:|------------------:|
+`r dfCost_summ$EVENTTYPE[1]`  |   $`r format(round(1000000*dfCost_summ$PROPERTY[1],0), big.mark=",")`  |   $`r format(round(1000000*dfCost_summ$CROP[1],0), big.mark=",")`  |   $`r format(round(1000000*(dfCost_summ$PROPERTY[1] + dfCost_summ$CROP[1]),0), big.mark=",")`  |  `r format(100*round((dfCost_summ$PROPERTY[1]+dfCost_summ$CROP[1])/sum(dfCost_summ_ext$COST),2),big.mark=",")`%  
+`r dfCost_summ$EVENTTYPE[2]`  |   $`r format(round(1000000*dfCost_summ$PROPERTY[2],0), big.mark=",")`  |   $`r format(round(1000000*dfCost_summ$CROP[2],0), big.mark=",")`  |  $ `r format(round(1000000*(dfCost_summ$PROPERTY[2] + dfCost_summ$CROP[2]),0), big.mark=",")`  |  `r format(100*round((dfCost_summ$PROPERTY[2]+dfCost_summ$CROP[2])/sum(dfCost_summ_ext$COST),2),big.mark=",")`%  
+`r dfCost_summ$EVENTTYPE[3]`  |   $`r format(round(1000000*dfCost_summ$PROPERTY[3],0), big.mark=",")`  |   $`r format(round(1000000*dfCost_summ$CROP[3],0), big.mark=",")`  |   $`r format(round(1000000*(dfCost_summ$PROPERTY[3] + dfCost_summ$CROP[3]),0), big.mark=",")`  |  `r format(100*round((dfCost_summ$PROPERTY[3]+dfCost_summ$CROP[3])/sum(dfCost_summ_ext$COST),2),big.mark=",")`%  
+`r dfCost_summ$EVENTTYPE[4]`  |   $`r format(round(1000000*dfCost_summ$PROPERTY[4],0), big.mark=",")`  |   $`r format(round(1000000*dfCost_summ$CROP[4],0), big.mark=",")`  |   $`r format(round(1000000*(dfCost_summ$PROPERTY[4] + dfCost_summ$CROP[4]),0), big.mark=",")`  |  `r format(100*round((dfCost_summ$PROPERTY[4]+dfCost_summ$CROP[4])/sum(dfCost_summ_ext$COST),2),big.mark=",")`%  
+`r dfCost_summ$EVENTTYPE[5]`  |   $`r format(round(1000000*dfCost_summ$PROPERTY[5],0), big.mark=",")`  |   $`r format(round(1000000*dfCost_summ$CROP[5],0), big.mark=",")`  |   $`r format(round(1000000*(dfCost_summ$PROPERTY[5] + dfCost_summ$CROP[5]),0), big.mark=",")`  |  `r format(100*round((dfCost_summ$PROPERTY[5]+dfCost_summ$CROP[5])/sum(dfCost_summ_ext$COST),2),big.mark=",")`%  
+GRAND TOTALS  | $`r format(round(1000000*sum(dfCost_summ$PROPERTY),0), big.mark=",")` |  $`r format(round(1000000*sum(dfCost_summ$CROP),0), big.mark=",")`  |  $`r format(round(1000000*sum(dfCost_summ_ext$COST),0), big.mark=",")`  | 
+
+Floods have much higher cost impact than any other event, particularly if one adds the various flood categories together (ie. all categories containing the word "flood") $`r format(numEvent_flood_all_cost, big.mark=",")`, which is about `r format(100*round(numEvent_flood_all_cost/numEvent_all_cost,2),big.mark=",")`% of the total cost.  
+  
+It's also noticeable that crop damage costs are tiny compared to property damage.  
+  
+Just on these numbers one might expect that most of the damage -  
+*  Relates to property  
+*  Arises from flooding, which often (but not always) accompanies storms  
+*  Very likely occurs primarily in cities and large towns, since this is where property is concentrated (more analysis required)  
+  
+It is interesting to observe that Tornados cause so much damage. They could be considered a storm which generates damage with high winds alone (assuming little water damage in this case, more worked required to confirm) whereas Hurricanes combine the damaging winds of Tornados along with a high propensity for flooding (both rain and tidal surge).
+  
+Flood events rarely occur without warning (in an age of satellite surveillance and sophisticated weather prediction) so it seems reasonable to expect that flood preparation could ameliorate the most significant financial impacts of adverse weather events.  
+
+------------------------------
